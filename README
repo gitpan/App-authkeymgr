@@ -1,0 +1,31 @@
+NAME
+    App::authkeymgr - Interactively manage SSH authorized_keys files
+
+SYNOPSIS
+      ## Manage authorized_keys interactively
+      $ authkeymgr --help
+  
+      ## Build authorized_keys out of self-managed dirs
+      $ authkeys-rebuild --help
+
+DESCRIPTION
+    authkeymgr provides useful tools for managing `authorized_keys' files.
+
+    With a long list of public keys, user management and revocation is
+    significantly easier when dealing with discrete single pubkeys that live
+    in a sensible directory structure.
+
+    The authkeymgr shell makes it easy to add "users" (sets of public keys),
+    add keys to users from external files, revoke/restore specific keys, and
+    rebuild `authorized_keys' after changes are made. (See the perldoc for
+    authkeymgr or use the *help* command from the authkeymgr shell.)
+
+    For more flexibility, authkeys-rebuild can be used for building
+    `authorized_keys' lists from self-managed directories.
+
+AUTHOR
+    Jon Portnoy <avenj@cobaltirc.org>
+
+    The original stand-alone authkeys-rebuild was the result of a bored
+    Sunday and a discussion on #linode @ *irc.oftc.net* -- blame heckman.
+

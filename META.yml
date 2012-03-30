@@ -1,0 +1,34 @@
+---
+abstract: 'Interactively manage SSH authorized_keys files'
+author:
+  - 'Jon Portnoy <avenj@cobaltirc.org>'
+build_requires:
+  Test::More: 0
+configure_requires:
+  Module::Build: 0.38
+dynamic_config: 1
+generated_by: 'Module::Build version 0.38, CPAN::Meta::Converter version 2.112150'
+license: perl
+meta-spec:
+  url: http://module-build.sourceforge.net/META-spec-v1.4.html
+  version: 1.4
+name: App-authkeymgr
+provides:
+  App::authkeymgr:
+    file: lib/App/authkeymgr.pm
+    version: 0.010
+requires:
+  File::Copy: 0
+  File::Find: 0
+  File::Path: 2.06
+  File::Slurp: 9999.14
+  File::Spec: 0
+  Getopt::Long: 0
+  Term::ReadLine: 0
+  Term::UI: 0.20
+  Text::ParseWords: 0
+  Time::Piece: 0
+  perl: v5.10.1
+resources:
+  license: http://dev.perl.org/licenses/
+version: 0.010

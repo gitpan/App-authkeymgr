@@ -1,0 +1,829 @@
+#!perl
+
+use 5.10.1;
+use strict;
+use warnings;
+
+use App::authkeymgr;
+
+use File::Copy;
+use File::Find;
+use File::Path qw/make_path remove_tree/;
+use File::Spec;
+
+use File::Slurp;
+
+use Term::UI;
+use Term::ReadLine;
+
+use Time::Piece;
+
+use Text::ParseWords qw/parse_line/;
+
+my %disp = (
+  help => \&_cmd_help,
+  h    => \&_cmd_help,
+  
+  quit => \&_cmd_quit,
+  q    => \&_cmd_quit,
+  
+  list => \&_cmd_list,
+  ls   => \&_cmd_list,
+
+  adduser  => \&_cmd_adduser,
+  deluser  => \&_cmd_deluser,
+  
+  showkey  => \&_cmd_showkey,
+  addkey   => \&_cmd_addkey,
+  delkey   => \&_cmd_delkey,
+  revoke   => \&_cmd_delkey,
+  restore  => \&_cmd_restore,
+  
+  build    => \&_cmd_build,
+  rebuild  => \&_cmd_build,
+);
+
+my $term  = Term::ReadLine->new('authkeymgr');
+my $outfh = $term->OUT || \*STDOUT ;
+
+my $keydir;
+
+use Getopt::Long;
+GetOptions(
+  'version' => sub {
+    print $outfh (
+      "authkeymgr - App::authkeymgr-",
+       $App::authkeymgr::VERSION,
+      "\n",
+    );
+    exit 0
+  },
+
+  'help' => sub {
+    print $outfh (
+      "authkeymgr usage:\n\n",
+      "  --help\n",
+      "  --version\n\n",
+      "  --keydir=PATH\n",
+      "    Path to public keys root directory\n",
+    );
+    exit 0
+  },
+  
+  'keydir=s' => \$keydir,
+);
+
+unless ($keydir) {
+  ## none specified, try defaults ...
+  if ($ENV{HOME} && -e $ENV{HOME} ."/.ssh") {
+    $keydir = $ENV{HOME} ."/.ssh/pubkeys";
+  } else {
+    $keydir = "pubkeys";
+  }
+  print $outfh "Key directory not specified; using default\n";
+}
+
+print $outfh "Current key directory: $keydir\n";
+
+unless (-e $keydir) {
+  print $outfh "! Selected key directory does not exist.\n";
+  print $outfh "(Path: $keydir)\n";
+
+  my $shouldcreate = $term->ask_yn(
+    prompt  => "Create the directory? ",
+    default => "y",
+  );
+  
+  if ($shouldcreate) {
+    if ( make_path($keydir, { mode => 0700 }) ) {
+      print $outfh "Created path: $keydir\n";
+    } else {
+      print $outfh "Could not create $keydir\n";
+    }
+  }
+
+}
+
+die "Not a directory: $keydir\n" unless -d $keydir;
+
+my $usersdir = $keydir ."/users";
+
+unless (-e $usersdir) {
+  print $outfh "! Users directory does not exist.\n";
+  print $outfh "(Path: $usersdir)\n";
+
+  my $shouldcreate = $term->ask_yn(
+    prompt  => "Attempt to create users directory? ",
+    default => "y",
+  );
+  
+  if ($shouldcreate) {
+    if ( make_path($usersdir, { mode => 0700 }) ) {
+      print $outfh "Created path: $usersdir\n";
+    } else {
+      print $outfh "Could not create $usersdir\n";
+    }
+  }
+
+}
+
+die "Not a directory: $usersdir\n" unless -d $usersdir;
+
+my $have_rebuilt = 1;
+PROMPT: while (1) {
+
+  my $prompt = $have_rebuilt ? "keymgr> " : "keymgr*> " ;
+  my $cmd = $term->get_reply(
+    prompt  => $prompt,
+    default => "h",
+  );
+  
+  if ($cmd) {
+    $term->addhistory($cmd);
+
+    my ($cmdopts, $parsedcmd) = $term->parse_options($cmd);
+    my ($thiscmd, @args) = parse_line('\s+', 0, $parsedcmd);
+
+    if (defined $disp{$thiscmd}) {
+      $disp{$thiscmd}->($cmdopts, @args);
+    } else {
+      print $outfh "Unknown command, try `help`\n";
+      next PROMPT
+    }
+
+  }
+}
+
+
+
+sub catuserdir {
+  my ($user) = @_;
+  return unless $user;
+  my $thisuser_dir = File::Spec->catdir($usersdir, $user);
+  return $thisuser_dir
+}
+
+## Command handlers
+
+sub _cmd_quit {
+  print $outfh "Quit\n";
+  print $outfh "! Changes made without a rebuild.\n"
+    unless $have_rebuilt;
+  exit 0
+}
+
+sub _cmd_list {
+  my ($opts, $user) = @_;
+  ## list users, or list keys for specified user
+  
+  if ($user) {
+    my $thisuser_dir = catuserdir($user);
+
+    unless (-d $thisuser_dir) {
+      print $outfh (
+        "No userdir found for $user\n",
+        "(Path: $thisuser_dir)\n",
+      );
+      return
+    }
+
+    ## mostly a findkeys() example
+    ## everywhere else following uses findkeys($path,0,1) syntax
+    ## (standard exts, no deep search)    
+    my @pubkeys = App::authkeymgr::findkeys(
+      $thisuser_dir, [qw/pub pubkey/], 'NO_DEEP_SEARCH'
+    );
+        
+    unless (@pubkeys) {
+      print $outfh "-> No public keys for $user\n";
+    } else {
+      print $outfh "-> Keys for ${user}:\n";
+      print $outfh "  $_\n" for sort 
+        map { (File::Spec->splitpath($_))[2] } @pubkeys;
+    }
+
+    my @revoked = App::authkeymgr::findkeys(
+      $thisuser_dir, [qw/REVOKED/], 'NO_DEEP_SEARCH'
+    );
+    
+    if (@revoked) {
+      print $outfh "-> User has revoked keys:\n";
+      print $outfh "  $_\n" for sort
+        map { (File::Spec->splitpath($_))[2] } @revoked;
+    }
+
+  } else {
+    my($dirh, @dirs);
+
+    unless ( opendir($dirh, $usersdir) ) {
+      print $outfh "Could not open $usersdir: $!\n";
+      return
+    }
+
+    while ( my $thisfile = readdir($dirh) ) {
+      next if index($thisfile, '.') == 0;
+      my $thisfull = File::Spec->catdir($usersdir, $thisfile);
+      push(@dirs, $thisfile) if -d $thisfull;
+    }
+
+    closedir($dirh);
+    
+    unless (@dirs) {
+      print $outfh "No user directories.\n";
+      return
+    }
+    
+    print $outfh "User directories:\n";
+    print $outfh "  $_\n" for @dirs;
+  }
+}
+
+sub _cmd_adduser {
+  my ($opts, $user) = @_;
+  
+  unless ($user) {
+    print $outfh "Usage: adduser <username>\n";
+    return
+  }
+
+  unless ($user =~ /^[A-Za-z0-9_\-\[\]\.]+$/) {
+    print $outfh "Invalid username.\n";
+    return
+  }
+  
+  my $thisuser_dir = catuserdir($user);
+  
+  if (-e $thisuser_dir) {
+    print $outfh "User dir already exists for $user\n";
+    print $outfh "(Path: $thisuser_dir)\n";
+    return
+  }
+  
+  if ( make_path($thisuser_dir, { mode => 0700 }) ) {
+    print $outfh "Created directory for user $user\n";
+  } else {
+    print $outfh "! Failed to create path: $thisuser_dir\n";
+    return
+  }
+}
+
+sub _cmd_deluser {
+  my ($opts, $user) = @_;
+
+  unless ($user) {
+    print $outfh "Usage: deluser <username>\n";
+    return
+  }
+  
+  my $thisuser_dir = catuserdir($user);
+  
+  unless (-d $thisuser_dir) {
+    print $outfh "User dir not a directory: $thisuser_dir\n";
+    print $outfh "Are you sure this user exists?\n";
+    return
+  }
+  
+  print $outfh "Path selected for deletion:\n$thisuser_dir\n";
+  
+  my $orly = $term->ask_yn(
+    print_me => "! deluser will completely remove the directory.",
+    prompt   => "! Really delete key directory for $user? ",
+    default  => "n",
+  );
+  
+  if ($orly) {
+    print $outfh "Deleting $thisuser_dir\n";
+    remove_tree( $thisuser_dir, { verbose => 1 } );
+    $have_rebuilt = 0;
+  } else {
+    print $outfh "Skipping deletion.\n";
+    return
+  }
+}
+
+sub _cmd_showkey {
+  my ($opts, $user, $key) = @_;
+  
+  unless ($user) {
+    print $outfh "Usage: showkey <user> [key]\n";
+    return
+  }
+  
+  my $thisuser_dir = catuserdir($user);
+  
+  unless (-d $thisuser_dir) {
+    print $outfh "User dir not a directory: $thisuser_dir\n";
+    print $outfh "Perhaps you wanted `adduser`?\n";
+    return  
+  }
+  
+  unless ($key) {
+    my @keys = map { (File::Spec->splitpath($_))[2] } (
+      sort( App::authkeymgr::findkeys($thisuser_dir,0,1) ),
+      sort( App::authkeymgr::findkeys($thisuser_dir, ['REVOKED'], 1) ),
+    );
+    $key = $term->get_reply(
+      print_me => "No key specified.",
+      prompt   => "Select key to show, 1 to return: ",
+      choices  => ['Return to prompt', @keys],
+    );
+    return if $key eq 'Return to prompt';
+  }
+  
+  my $thiskeypath = File::Spec->catfile($thisuser_dir, $key);
+  
+  unless (-e $thiskeypath) {
+    if (-e $thiskeypath.".pub") {
+      $thiskeypath = $thiskeypath.".pub";
+    } else {
+      print $outfh "No such key: $thiskeypath\n";
+      return
+    }
+  }
+  
+  my $thiskeycontent = read_file($thiskeypath, err_mode => 'carp');
+  return unless defined $thiskeycontent;
+  print $outfh "# Path: ${thiskeypath}\n${thiskeycontent}\n";
+}
+
+sub _cmd_addkey {
+  my ($opts, $user, $extpath, $keyname) = @_;
+  ## add a new pubkey(s) from an external path
+
+  unless ($user) {
+    print $outfh "Usage: addkey <user> [path] [keyname]\n";
+    return
+  }
+  
+  my $thisuser_dir = catuserdir($user);
+  
+  unless (-d $thisuser_dir) {
+    print $outfh "User dir not a directory: $thisuser_dir\n";
+    print $outfh "Perhaps you wanted `adduser`?\n";
+    return
+  }
+  
+  until ($extpath) {
+    $extpath = $term->get_reply(
+      prompt => "Path to new public key: ",
+    );
+  }
+  
+  unless (-e $extpath) {
+    print $outfh "Specified key path does not exist\n";
+    print $outfh "(Path: $extpath)\n";
+    return
+  }
+  
+  until ($keyname) {
+    $keyname = $term->get_reply(
+      prompt => "New key name (without extension): ",
+    );
+  }
+  
+  unless ($keyname =~ /^[A-Za-z0-9_\-\[\]\.]+$/) {
+    print $outfh "Invalid key name\n";
+    return
+  }
+  
+  my $newkeypath = File::Spec->catfile($thisuser_dir, $keyname.".pub");
+
+  if (-e $newkeypath) {
+    print $outfh "! Destination path exists for $keyname\n";
+    return
+  }
+  
+  if (-e $newkeypath.".REVOKED") {
+    print $outfh "! A revoked key with that name exists ($keyname)\n";
+    return
+  }
+
+  if ( copy($extpath, $newkeypath) ) {
+    print $outfh "Copied to $newkeypath\n";
+    $have_rebuilt = 0;
+  } else {
+    print $outfh "Copy failed.\n";
+    return
+  }
+}
+
+sub _cmd_delkey {
+  my ($opts, $user, $key) = @_;
+  ## also called via 'revoke'
+  ## revoke a key by name, move to .REVOKED
+
+  unless ($user) {
+    print $outfh "Usage: delkey <user> [key]\n";
+    return
+  }
+  
+  my $thisuser_dir = catuserdir($user);
+  
+  unless (-d $thisuser_dir) {
+    print $outfh "User dir not a directory: $thisuser_dir\n";
+    return
+  }
+  
+  my @found = App::authkeymgr::findkeys($thisuser_dir,0,1);
+  my %keypaths;
+  for my $thiskeypath (@found) {
+    my $file = (File::Spec->splitpath($thiskeypath))[2];
+    $keypaths{$file} = $thiskeypath;
+  }
+  
+  unless (defined $key && defined $keypaths{$key}) {
+    $key = $term->get_reply(
+      prompt  => "Select key to revoke, 1 to return: ",
+      choices => ['Return to prompt', keys %keypaths],
+    );
+    return if $key eq 'Return to prompt';
+  }
+  
+  my $srcpath = $keypaths{$key};
+
+  if ($opts->{delete}) {
+    print $outfh "! --delete specified\n";
+    print $outfh "Path to unlink: $srcpath\n";
+
+    my $cont = $term->ask_yn(
+      print_me => "This will delete the actual key file on disk.",
+      prompt   => "! Delete $key? ",
+      default  => "y",
+    );
+
+    if ($cont) {
+      unless ( unlink($srcpath) ) {
+        print $outfh "Failed to unlink $key: $!\n";
+        return
+      }
+      print $outfh "Deleted: $key\n";
+      $have_rebuilt = 0;
+    } else {
+      print $outfh "Skipping deletion.\n";
+    }
+
+    return
+  }
+  
+  if ( move($srcpath, $srcpath.".REVOKED") ) {
+    print $outfh "Revoked: $key\n";
+    $have_rebuilt = 0;
+  } else {
+    print $outfh "move() failed.\n";
+  }
+
+}
+
+sub _cmd_restore {
+  my ($opts, $user, $key) = @_;
+  ## opposite of above
+  
+  unless ($user) {
+    print $outfh "Usage: restore <user> [key]\n";
+    return
+  }
+  
+  my $thisuser_dir = catuserdir($user);
+  
+  unless (-d $thisuser_dir) {
+    print $outfh "User dir not a directory: $thisuser_dir\n";
+    return
+  }
+  
+  my @revoked = App::authkeymgr::findkeys($thisuser_dir, [qw/REVOKED/], 1);
+  
+  unless (@revoked) {
+    print $outfh "User $user has no revoked keys.\n";
+    return
+  }
+  
+  my %keypaths;
+  for my $thiskeypath (@revoked) {
+    my $file = (File::Spec->splitpath($thiskeypath))[2];
+    $keypaths{$file} = $thiskeypath;
+  }
+  
+  unless (defined $key && defined $keypaths{$key}) {
+    $key = $term->get_reply(
+      prompt  => "Select key to restore, 1 to return: ",
+      choices => ['Return to prompt', keys %keypaths],
+    );
+    return if $key eq 'Return to prompt';
+  }
+  
+  my $srcpath  = $keypaths{$key};
+  my $destpath = $srcpath;
+  $destpath    =~ s/\.REVOKED$//;
+  my $newkey   = (File::Spec->splitpath($destpath))[2];
+
+  if ( move($srcpath, $destpath) ) {
+    print $outfh "Restored: $newkey\n";
+    $have_rebuilt = 0;
+  } else {
+    print $outfh "Move failed (-> $newkey)\n";
+    return
+  }
+}
+
+sub _cmd_build {
+  my ($opts, $outpath) = @_;
+
+  my($dirh, @userdirs);
+
+  unless ( opendir($dirh, $usersdir) ) {
+    print $outfh "Could not open $usersdir: $!\n";
+    return
+  }
+
+  while (my $thisfile = readdir($dirh)) {
+    next if index($thisfile, '.') == 0;
+    my $thisfull = File::Spec->catdir($usersdir, $thisfile);
+    push(@userdirs, $thisfull) if -d $thisfull;
+  }
+
+  closedir($dirh);
+
+  unless (@userdirs) {
+    print $outfh "No user directories found\n";
+    print $outfh "(Path: $usersdir)\n";
+    print $outfh "! Nothing to do, aborting.\n";
+    return
+  }
+  
+  print $outfh "Found ".scalar @userdirs." directories\n";
+  
+  until ($outpath) {
+    my $default_authkeys = $ENV{HOME} ? 
+                           $ENV{HOME} ."/.ssh/authorized_keys"
+                           : '';
+    $outpath = $term->get_reply(
+      prompt  => "Destination: ",
+      default => $default_authkeys,
+    );
+  }
+  
+  my $dir = (File::Spec->splitpath($outpath))[1];
+  if ($dir && !-e $dir) {
+    
+    my $shouldcreate = $term->ask_yn(
+      print_me => "Nonexistant path: $dir",
+      prompt   => "Create $dir? ",
+      default  => "y",
+    );
+    
+    if ($shouldcreate) {
+      if ( make_path($dir, { mode => 0700 }) ) {
+        print $outfh "Created path: $dir\n";
+      } else {
+        print $outfh "Could not create $dir\n";
+        return
+      }
+    }
+
+  } elsif (-e $dir && !-d $dir) {
+    print $outfh "Destination path exists but is not a directory.\n";
+    print $outfh "(Path: $dir)\n";
+    return
+  }
+  
+  if (-e $outpath) {
+    print $outfh "Found preexisting file: $outpath\n";
+
+    my $bakpath = $outpath .".bak";
+    my $bakname = (File::Spec->splitpath($bakpath))[2];
+    if (-e $bakpath) {
+
+      my $destruct = $term->ask_yn(
+        print_me => "File exists: $bakname",
+        prompt   => "Overwrite backup $bakname? ",
+        default  => "y",
+      );
+      unless ($destruct) {
+        print $outfh "Aborting.\n";
+        return
+      }
+    }
+
+    unless ( copy($outpath, $bakpath) ) {
+      return unless $term->ask_yn(
+        print_me => "Creating backup failed!",
+        prompt   => "! Try to continue anyway? ",
+        default  => "n",
+      );
+    } else {
+      chmod( 0600, $bakpath );
+      print $outfh "Backup -> $bakname\n";
+    }
+    
+  }
+
+  my $tstr = localtime->cdate;  
+  my $outbuf = "## Generated by authkeymgr $tstr ##\n";
+  
+  USER: for my $thisuser_dir (@userdirs) {
+
+    my $thisuser_name = (File::Spec->splitdir($thisuser_dir))[-1];
+    print $outfh "-> Adding keys for $thisuser_name\n";
+
+    my($openuserdir, @thisuser_keys);
+
+    unless ( opendir($openuserdir, $thisuser_dir) ) {
+      print $outfh "Failed to open $thisuser_dir: $!\n";
+      my $cont = $term->ask_yn(
+        print_me => "Could not open userdir for $thisuser_name",
+        prompt  => "! Continue anyway? ",
+        default => "n",
+      );
+      next USER if $cont;
+      print $outfh "Skipping write, returning to prompt.\n";
+      return
+    }
+
+    FILE: while ( my $thisfile = readdir($openuserdir) ) {
+      next FILE if index($thisfile, '.') == 0;
+      push(@thisuser_keys, 
+        File::Spec->catfile($thisuser_dir, $thisfile)
+      ) if $thisfile =~ /\.pub(key)?$/;
+    }
+
+    closedir($openuserdir);
+
+    $outbuf .= "\n#### $thisuser_name ####\n";
+
+    $outbuf .= "### No keys for user ###\n" unless @thisuser_keys;
+  
+    PUBKEY: for my $thiskey_path (@thisuser_keys) {
+      my $thiskey_name = (File::Spec->splitpath($thiskey_path))[2];
+      my $thiskey_content = read_file($thiskey_path, err_mode => 'carp' );
+      unless (defined $thiskey_content) {
+        my $cont = $term->ask_yn(
+          print_me => 
+            "Failed to read key $thiskey_name (user: $thisuser_name)",
+          prompt => "! Continue anyway? ",
+          default => "n",
+        );
+        next PUBKEY if $cont;
+        print $outfh "Skipping write, returning to prompt.\n";
+        return
+      }
+
+      $outbuf .= "## $thiskey_name ##\n" 
+               . "# $thiskey_path\n"
+               . $thiskey_content
+               . "\n" ;
+
+      print $outfh "  + $thiskey_path\n";
+    }
+  
+  }
+
+  print $outfh "Writing: $outpath\n";
+  write_file($outpath, { err_mode => 'carp', atomic => 1 }, $outbuf);
+  chmod(0600, $outpath) if -e $outpath;
+  $have_rebuilt = 1;
+}
+
+sub _cmd_help {
+  my ($opts, $item) = @_;
+  
+  my $help = {
+    ## misc
+    list    => [
+      "ls [user]",
+      "list [user]",
+      "  With no arguments, list user directories.",
+      "  If a user is specified, list keys for the user.",
+    ],
+    
+    ## users
+    adduser => [
+      "adduser <user>",
+      "  Add a new user with an empty pubkey directory.",
+    ],
+    deluser => [
+      "deluser <user>",
+      "  Delete a user's directory and all of their keys.",
+      "  Operates destructively.",
+      "  Also see `revoke` to revoke specific keys safely.",
+    ],
+    
+    ## pub keys
+    showkey => [
+      "showkey <user> [key]",
+      "  Display the contents of a specific key file.",
+      "  A list is presented if the key is not specified.",
+    ],
+    addkey  => [
+      "addkey <user> [path] [keyname]",
+      "  Add a public key from a specified path.",
+      "  The key will be copied to the specified user's keydir.",
+      "  Prompts if path and/or keyname are missing.",
+    ],
+    revoke  => [
+      "revoke <user> [key]",
+      "  Suspends a specific key.",
+      "  A list is presented if the key is not specified.",
+      "  The pubkey will have .REVOKED appended and will be skipped.",
+      "  If --delete is specified, the key is deleted entirely.",
+      "  Also see `restore`",
+    ],
+    restore => [
+      "restore <user> [key]",
+      "  Restore a previously revoked key.",
+      "  A list is presented if the key is not specified.",
+      "  Also see `revoke`",
+    ],
+    
+    ## authorized_keys
+    build   => [
+      "build [destination]",
+      "  Build an authorized_keys file from user directories.",
+      "  `rebuild` is an alias for `build`",
+      "  You should rebuild after every significant change.",
+    ],
+  };
+  
+  if (!$item || !defined $help->{$item}) {
+    my @cmds = sort keys %$help;
+    print $outfh "Commands: \n";
+    while (@cmds) {
+      my $thisc = @cmds < 4 ? @cmds : 4 ;
+      my $thislist = sprintf("%-10s" x $thisc, splice(@cmds, 0, 4));
+      print $outfh " $thislist\n";
+    }
+    print $outfh "Use `help <cmd>` for more information.\n";
+  } else {
+    my $thishelp = join "\n", @{ $help->{$item} };
+    print $outfh $thishelp, "\n";
+  }
+}
+
+
+__END__
+
+=pod
+
+=head1 NAME
+
+authkeymgr - Interactively manage SSH authorized_keys files
+
+=head1 SYNOPSIS
+
+  ## Invocation:
+  authkeymgr
+  authkeymgr --keydir=/path/to/pubkey/root
+  
+  ## Get more extensive help:
+  keymgr> help
+  
+  ## Add a user:
+  keymgr> adduser joe
+
+  ## Give them keys:
+  keymgr> addkey joe
+  
+  ## Perhaps select one to revoke for now:
+  keymgr*> revoke joe
+  
+  ## Restore a key:
+  keymgr*> restore joe
+
+  ## Build a new authorized_keys:
+  keymgr*> build
+  ...
+  keymgr>
+
+=head1 DESCRIPTION
+
+B<authkeymgr> provides an interactive interface to managing sets of 
+public keys and subsequently rebuilding C<authorized_keys> files for 
+OpenSSH.
+
+Defaults to storing users/keys in C<$HOME/.ssh/pubkeys> -- you can 
+specify a different keydir via I<--keydir>
+
+This approach generally assumes that your public keys are organized by 
+user; for example, I use something like the following approach:
+
+  ## Add a couple systems
+  keymgr> adduser rakshasa
+  keymgr> adduser typhon
+  ## Add some keys for them
+  keymgr> addkey rakshasa avenj-rakshasa.pub avenj.pub
+  keymgr*> addkey rakshasa devel-rakshasa.pub devel.pub
+  keymgr*> addkey typhon avenj-typhon.pub avenj.pub
+  ## Rebuild authorized_keys
+  keymgr*> build
+  keymgr>
+
+Command arguments can be quoted.
+
+Try I<help> from the keymgr prompt for extended usage information.
+
+See B<perldoc authkeys-rebuild> if you'd rather manage key sets manually.
+
+=head1 AUTHOR
+
+Jon Portnoy <avenj@cobaltirc.org>
+
+=cut

@@ -1,0 +1,34 @@
+Revision history for App::authkeymgr
+
+0.010 2012-03-29
+
+  - authkeymgr; --delete option for `revoke`
+  - authkeymgr; support quoted arguments
+  - authkeymgr; indicate (in prompt/at quit) when rebuild needed  
+  - authkeymgr; safer authorized_keys rebuilds
+    Prompt (w/ default abort) if unable to read a user or key.
+  - reconstruct paths via File::Spec
+    Unfortunately, I only have Unix systems to test on.
+    (...which would seem to cover most of the OpenSSH world, but...)
+
+0.009 2012-03-27
+
+  - Move `authkeys-keymgr` to less-clumsy `authkeymgr`
+  - Write cleaner authorized_keys files
+    (Include both key name & path in authorized_keys)
+
+0.008 2012-03-26
+
+Miscellaneous keymgr cleanups.
+
+  - authkeymgr.pm: provide single-dir/non-recursive findkeys
+  - keymgr: use opendir(), kill all instances of glob()
+  - keymgr: use non-recursive findkeys()
+  - keymgr: tweak output format to include key name
+
+0.007 2012-03-26
+
+  - First reasonably complete revision.
+
+Prior history lives in git://eris.cobaltirc.org/app-authkeymgr
+Also see http://www.cobaltirc.org/dev/authkeymgr/wiki

@@ -1,0 +1,21 @@
+INSTALL
+App::authkeymgr
+
+Install via cpan (recommended):
+
+  $ tar xvzf App-authkeymgr-VERSION.tar.gz
+  $ cd App-authkeymgr-VERSION
+  $ cpan .
+
+Install via CPANPLUS (cpanp):
+  $ cpanp -i --verbose \
+     http://eris.cobaltirc.org/dev/authkeymgr/dists/CURRENT.tgz
+
+Install via Build.PL directly:
+
+  $ perl Build.PL
+  $ ./Build
+  ## May need sudo:
+  $ ./Build install
+
+(Not root? Look into using local::lib to make life easy.)
