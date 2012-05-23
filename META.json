@@ -4,7 +4,7 @@
       "Jon Portnoy <avenj@cobaltirc.org>"
    ],
    "dynamic_config" : 1,
-   "generated_by" : "Module::Build version 0.38, CPAN::Meta::Converter version 2.112150",
+   "generated_by" : "Module::Build version 0.38, CPAN::Meta::Converter version 2.120921",
    "license" : [
       "perl_5"
    ],
@@ -16,7 +16,7 @@
    "prereqs" : {
       "build" : {
          "requires" : {
-            "Test::More" : 0
+            "Test::More" : "0"
          }
       },
       "configure" : {
@@ -25,17 +25,20 @@
          }
       },
       "runtime" : {
+         "recommends" : {
+            "Term::ReadLine::Perl" : "0"
+         },
          "requires" : {
-            "File::Copy" : 0,
-            "File::Find" : 0,
+            "File::Copy" : "0",
+            "File::Find" : "0",
             "File::Path" : "2.06",
             "File::Slurp" : "9999.14",
-            "File::Spec" : 0,
-            "Getopt::Long" : 0,
-            "Term::ReadLine" : 0,
+            "File::Spec" : "0",
+            "Getopt::Long" : "0",
+            "Term::ReadLine" : "0",
             "Term::UI" : "0.20",
-            "Text::ParseWords" : 0,
-            "Time::Piece" : 0,
+            "Text::ParseWords" : "0",
+            "Time::Piece" : "0",
             "perl" : "v5.10.1"
          }
       }
@@ -43,7 +46,7 @@
    "provides" : {
       "App::authkeymgr" : {
          "file" : "lib/App/authkeymgr.pm",
-         "version" : "0.010"
+         "version" : "0.011"
       }
    },
    "release_status" : "stable",
@@ -52,5 +55,5 @@
          "http://dev.perl.org/licenses/"
       ]
    },
-   "version" : "0.010"
+   "version" : "0.011"
 }

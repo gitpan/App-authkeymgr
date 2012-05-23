@@ -4,14 +4,11 @@ use 5.10.1;
 use strict;
 use warnings;
 
-STDOUT->autoflush(1);
-
 use App::authkeymgr;
 
 use File::Copy;
 use File::Slurp;
-
-my $default_keydir = ".ssh/pubkeys";
+use File::Spec;
 
 use Getopt::Long;
 my $opts = {
@@ -51,13 +48,17 @@ GetOptions( $opts,
   'dest|authkeys=s',
 );
 
+$|++;
+
 unless ($opts->{keydir}) {
-  ## do we have ~/.ssh/pubkeys ?
   $ENV{HOME} or die "--keydir not specified and no home directory found\n";
-  my $maybe_keydir = $ENV{HOME} ."/". $default_keydir ; 
+
+  my $default_keydir = File::Spec->catdir($ENV{HOME}, ".ssh", "pubkeys");
+
   die "--keydir not specified and no $default_keydir found\n"
-    unless -d $maybe_keydir;
-  $opts->{keydir} = $maybe_keydir;
+    unless -d $default_keydir;
+
+  $opts->{keydir} = $default_keydir;
 }
 
 until ( -d $opts->{keydir} ) {
@@ -78,9 +79,10 @@ until ( -d $opts->{keydir} ) {
 
 unless ($opts->{dest}) {
   $ENV{HOME} or die "--dest not specified and no home directory found\n";
-  my $sshdir = $ENV{HOME} ."/.ssh";
+
+  my $sshdir = File::Spec->catdir($ENV{HOME}, ".ssh");
   
-  my $default_dest = $sshdir ."/authorized_keys";
+  my $default_dest = File::Spec->catfile($sshdir, "authorized_keys");
 
   if ($opts->{yestoall}) {
     print "No --dest specified; defaulting to $default_dest\n";

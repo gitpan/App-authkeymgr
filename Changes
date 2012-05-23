@@ -1,5 +1,12 @@
 Revision history for App::authkeymgr
 
+0.011 2012-05-23
+
+  - authkeymgr; kill warning when commands are "halfway" quoted
+    (f.ex: "help)
+  - authkeys-rebuild; use File::Spec
+    (Should've been merged in 0.010, I fail.)
+
 0.010 2012-03-29
 
   - authkeymgr; --delete option for `revoke`

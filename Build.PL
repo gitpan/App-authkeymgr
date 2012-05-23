@@ -1,3 +1,4 @@
+#!/usr/bin/env perl
 use strict; use warnings;
 use Module::Build;
 
@@ -33,6 +34,10 @@ my $build = Module::Build->new(
     
     'Term::UI'       => '0.20',
     'Term::ReadLine' => 0,
+  },
+  
+  recommends => {
+    'Term::ReadLine::Perl' => 0,
   },
 );
 
